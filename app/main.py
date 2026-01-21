@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 import tempfile
@@ -17,46 +18,66 @@ from app.extractor import (
 from app.experience_calc import calculate_experience
 from app.location_address import extract_current_location, extract_address
 
-API_KEY = "CHANGE_THIS_SECRET"
 
+# ================= CONFIG =================
+API_KEY = "pk_ai_resume_2026"
+
+
+# ================= APP INIT =================
 app = FastAPI(
     title="AI Resume Parsing API",
     version="1.0"
 )
 
+# ================= CORS (FIXED) =================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # allow all origins (safe for now)
+    allow_credentials=True,
+    allow_methods=["*"],          # POST, OPTIONS, etc.
+    allow_headers=["*"],          # X-API-KEY, Content-Type
+)
 
-# -------- Request Model --------
+
+# ================= REQUEST MODEL =================
 class ResumeRequest(BaseModel):
-    resume: str   # S3 URL
+    resume: str   # S3 public or pre-signed URL
 
 
-# -------- API Endpoint --------
+# ================= API ENDPOINT =================
 @app.post("/parse-resume")
 def parse_resume(
     data: ResumeRequest,
     x_api_key: str = Header(None)
 ):
+    # -------- API KEY CHECK --------
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # Download resume
-    response = requests.get(data.resume, timeout=30)
+    # -------- DOWNLOAD RESUME --------
+    try:
+        response = requests.get(data.resume, timeout=30)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Resume download failed")
+
     if response.status_code != 200:
         raise HTTPException(status_code=400, detail="Resume download failed")
 
+    # Save temp PDF
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(response.content)
         resume_path = tmp.name
 
     try:
+        # -------- OCR + PARSING --------
         text = pdf_to_text(resume_path)
 
-        # Core extraction
         name = extract_name(text)
         email = extract_email(text)
         phone = extract_phone(text)
         education = extract_education(text)
         experience = calculate_experience(text)
+
         location = extract_current_location(text)
         address_info = extract_address(text)
 
@@ -65,7 +86,7 @@ def parse_resume(
 
         # -------- FINAL RESPONSE (CLIENT FORMAT) --------
         result = {
-            "candidateName": name,
+            "candidateName": name or "",
             "jobTitle": "",
             "department": "",
             "resume": data.resume,
@@ -77,8 +98,8 @@ def parse_resume(
             "country": address_info.get("country") if address_info else "india",
             "pinCode": address_info.get("pincode") if address_info else "",
 
-            "yearsOfExperience": experience,
-            "educationQualification": education,
+            "yearsOfExperience": experience if experience is not None else 0,
+            "educationQualification": education or "",
             "currentWorkLocation": (
                 f"{location['state']}, {location['country']}"
                 if location else ""
@@ -105,7 +126,7 @@ def parse_resume(
 
             "aadhar": {
                 "_id": "",
-                "aadharNumber": "" if not aadhaar_present else "************"
+                "aadharNumber": "************" if aadhaar_present else ""
             },
 
             "appliedDate": date.today().isoformat()
@@ -114,4 +135,6 @@ def parse_resume(
         return result
 
     finally:
-        os.remove(resume_path)
+        # Cleanup temp file
+        if os.path.exists(resume_path):
+            os.remove(resume_path)
