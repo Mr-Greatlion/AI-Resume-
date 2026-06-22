@@ -522,6 +522,19 @@ def _try_labeled_address_block(lines: list[str]) -> list[str]:
     return max(candidates, key=lambda item: item[0])[1] if candidates else []
 
 
+def _address_scan_lines(text: str) -> list[str]:
+    """Preserve OCR/PDF address blocks even when line breaks are collapsed."""
+    text = re.sub(
+        r"(?i)(?<!^)(?<!\n)(?=\s*[-#]*\s*(?:permanent\s+address|"
+        r"current\s+address|residential\s+address|correspondence\s+address|"
+        r"present\s+address|address\s+for\s+communication|"
+        r"communication\s+address|mailing\s+address|address)\s*[:\-])",
+        "\n",
+        text,
+    )
+    return [line.strip() for line in re.split(r"[\r\n\f]+", text) if line.strip()]
+
+
 # ============================================================
 #  DEEP SCAN — full document, exhaustive last resort
 # ============================================================
@@ -724,7 +737,7 @@ def extract_address(text: str) -> dict:
     # ── Scenario 2: strip trailing empty pages before any processing ──────────
     text = _strip_empty_pages(text)
 
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    lines = _address_scan_lines(text)
     address_parts = _try_labeled_address_block(lines)
 
     # ── STRATEGY 1: top-of-resume header scan (first 20 lines) ──────────────

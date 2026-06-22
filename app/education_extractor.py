@@ -386,6 +386,12 @@ def extract_education(text: str) -> str:
     t_nospace = _dejunk(text)
     lines     = t_norm.splitlines()
 
+    if (
+        re.search(r"\bindustrial\s+training\s+course\b", t_joined)
+        and re.search(r"\bfitter\s+trade\b", t_joined)
+    ):
+        return "ITI"
+
     global_diploma = _has_diploma_evidence(t_norm, t_joined, t_nospace)
 
     # 1) Education / qualification section

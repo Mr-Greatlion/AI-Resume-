@@ -1,6 +1,7 @@
 import re
 import spacy
 import phonenumbers
+from typing import Optional, List
 from app.education_extractor import extract_education
 from app.address_extractor import extract_address, extract_current_location
 from app.job_title_cache import get_job_titles
@@ -31,6 +32,7 @@ def is_valid_final_name(name):
         return False
 
     return True
+
 ROLE_MAP = {
     "shift": "Shift Incharge",
     "incharge": "Incharge",
@@ -472,152 +474,322 @@ def extract_job_title(text):
             return cleaned
     return best_title if best_title else "Fresher"
 
-def looks_like_name(text):
+# ================= NAME =================
 
-    BLACKLIST = [
-        "resume", "curriculum", "vitae",
-        "objective", "career", "summary",
-        "skills", "education", "academic",
-        "experience", "work experience",
-        "profile", "professional",
-        "declaration", "personal details",
-        "contact", "email", "phone",
-        "address", "language",
-        "working knowledge", "company",
-        "responsibilities", "project",
-        "manager", "engineer", "operator"
-    ]
-    words = text.split()
+BLACKLIST = [
+    "engineering", "college", "university", "institute",
+    "technologies", "technology", "solutions", "systems",
+    "pvt", "ltd", "limited", "company", "resume",
+    "curriculum", "vitae", "profile", "career", "objective",
+    "summary", "mail", "email", "address", "contact", "experience",
+    "safety", "officer", "ehs", "professional", "iso", "location",
+    "phone", "willing", "relocate", "india",
+    "diploma", "degree", "bachelor", "master", "b.tech", "m.tech",
+    "maintenance", "operation", "production", "management", "services",
+    "well", "also", "dist", "village", "mandal", "nagar", "road",
+    "post", "taluk", "taluka", "district", "state", "country",
+    "near", "behind", "opposite", "beside", "educational", "qualification",
+    "d.m.e", "dme",
+    "hazard", "identification", "class", "sscxth", "std", "standard",
+    "b.o.e", "b.e", "m.e", "mba", "mca", "bca", "bsc", "msc",
+    "board", "school", "intermediate", "hsc", "ssc", "tenth", "tenth class",
+    "strong", "resolver", "word", "document", "header", "box",
+    "certificate", "certified", "course", "program", "programme", "training",
+    "institute", "institution", "centre", "center",
+    "education", "educational", "qualification", "qualified",
+    "phd","Emechanicalengineering", "B Emechanicalengineering",
+]
 
-    if not (1 <= len(words) <= 4):
+PHRASE_BLACKLIST = [
+    "as well as", "such as", "along with", "responsible for",
+    "knowledge of", "experience in", "worked as", "working as",
+    "s/o", "d/o", "w/o", "son of", "daughter of", "wife of",
+]
+
+address_keywords = [
+    "post", "pincode", "pin", "mobile", "tq", "dist",
+    "at ", "no ", "road", "nagar", "street", "village",
+    "mandal", "district", "taluk", "taluka",
+]
+
+non_name_words = {
+    "dist", "village", "mandal", "nagar", "road", "post", "pin",
+    "taluk", "district", "state", "near", "the", "and", "for",
+    "with", "from", "well", "also", "maintenance", "operation",
+    "diploma", "degree", "sir", "shri", "mr", "mrs", "ms", "dr",
+    "class", "std", "hazard", "identification", "sscxth",
+}
+
+
+def looks_like_name(text: str) -> bool:
+    text_clean = text.lower().strip()
+    text_clean = re.sub(r'(?<=[a-z])\.(?=[a-z])', ' ', text_clean, flags=re.IGNORECASE)
+    text_clean_nodot = text_clean.replace(".", " ").strip()
+    words = text_clean_nodot.split()
+
+    if len(words) == 1:
+        word = words[0]
+        if (len(word) >= 6 and word.isalpha()
+                and word not in BLACKLIST
+                and word not in non_name_words):
+            return True
+        
+    if not (2 <= len(words) <= 5):
+        return False
+    if re.search(r"\d|[@_:/]", text):
+        return False
+    text_words_set = set(text_clean_nodot.split())
+    if any(bad in text_words_set for bad in BLACKLIST):
+        return False
+    if ":" in text:
+        return False
+    if any(phrase in text_clean for phrase in PHRASE_BLACKLIST):
         return False
 
-    if re.search(r"\d|[@_]", text):
+    alpha_words = [w for w in words if w.isalpha()]
+    if len(alpha_words) < 2:
+        return False
+    if any(w in non_name_words for w in words):
         return False
 
-    for bad in BLACKLIST:
-        if bad in text.lower():
+    if re.search(r'\([A-Za-z.]+\)', text):
+        stripped = re.sub(r'\s*\([^)]*\)', '', text).strip()
+        stripped_lower = stripped.lower()
+        stripped_words = re.sub(
+            r'(?<=[a-z])\.(?=[a-z])', ' ', stripped_lower, flags=re.IGNORECASE
+        ).replace(".", " ").split()
+        if not (2 <= len(stripped_words) <= 5):
+            return False
+        if any(w in non_name_words for w in stripped_words):
             return False
 
     return True
-def is_address_line(line):
-    return any(x in line.lower() for x in [
-        "nagar", "district", "road", "street", "colony",
-        "mandal", "pin", "village", "post"
-    ])
-def extract_name(text):
 
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
 
-    # ===============================
-    # STEP 1: STRICT NAME FIELD (SAFE)
-    # ===============================
-    for line in lines:
-        if re.match(r'^\s*name\s*[:\-]', line.lower()):
-            match = re.search(r'name\s*[:\-]\s*([A-Za-z\s\.]{3,50})', line, re.I)
-            if match:
-                name = match.group(1).strip().title()
-                if is_valid_name(name):
-                    return name
-
-    # ===============================
-    # STEP 2: MR / MS BASED (NEW)
-    # ===============================
-    match = re.search(r'\b(mr|ms|mrs)\.?\s+([A-Za-z\s\.]{3,50})', text, re.I)
+def extract_so_name(line: str) -> Optional[str]:
+    pattern_before = r'^([A-Za-z][A-Za-z\s.]{1,35}?),?\s+[SsDdWw][/\.][Oo][\s.]'
+    match = re.search(pattern_before, line)
     if match:
-        name = match.group(2).strip().title()
-        if is_valid_name(name):
-            return name
-
-    # ===============================
-    # STEP 3: HEADER DETECTION (FIXED)
-    # ===============================
-    for line in lines[:15]:
-
-        clean = line.strip()
-        lower = clean.lower()
-
-        if not clean:
-            continue
-
-        # ❌ HARD REJECTION (CRITICAL FIX)
-        if any(x in lower for x in [
-            "father", "s/o", "d/o",
-            "passport", "dob", "birth",
-            "address", "po:", "place",
-            "email", "phone", "mobile",
-            "resume", "curriculum", "vitae",
-            "objective", "skills", "experience",
-            "academic", "qualification",
-            "core competencies",
-            "declaration",
-            "web skype", "passport no"
-        ]):
-            continue
-
-        # ❌ reject junk chars
-        if re.search(r'\d|[@:/\-]', clean):
-            continue
-
-        # ❌ reject long lines
-        if len(clean.split()) > 4:
-            continue
-
-        # ✅ STRONG SIGNAL: UPPERCASE NAME
-        if clean.isupper() and 1 <= len(clean.split()) <= 4:
-            name = clean.title()
-            if is_valid_name(name):
-                return name
-
-        # ✅ NORMAL NAME
-        if re.match(r'^[A-Za-z.\s]{3,40}$', clean):
-            name = clean.title()
-            if is_valid_name(name):
-                return name
-
-    # ===============================
-    # STEP 4: EMAIL FALLBACK
-    # ===============================
-    match = re.search(r'([a-zA-Z]+)[._]?([a-zA-Z]+)?@', text)
-
-    if match:
-        parts = [p for p in match.groups() if p]
-        name = " ".join(p.capitalize() for p in parts)
-        if is_valid_name(name):
-            return name
-
+        candidate = match.group(1).strip().rstrip(",").strip()
+        words = candidate.replace(".", " ").split()
+        if 1 <= len(words) <= 4:
+            candidate_norm = re.sub(r'(?<=[a-zA-Z])\.(?=[a-zA-Z])', ' ', candidate)
+            candidate_norm = re.sub(r'[^\w\s.]', '', candidate_norm).replace(".", " ").strip()
+            if not any(bad in candidate_norm.lower() for bad in BLACKLIST):
+                return candidate.title()
     return None
-def is_valid_name(line):
 
-    BAD_WORDS = [
-        "curriculum", "vitae", "competencies",
-        "passport", "birth", "mechanical", "with",
-        "core", "date", "objective",
-        "father", "address", "place","instrument technician",
-        "department","government","india"
+
+def clean_inline_name(line: str) -> str:
+    line = re.sub(r'\s*[Ee][-\s]?[Mm]ail\s*[–:\-]?\s*\S+@\S+', '', line)
+    line = re.sub(
+        r'\s*(Ph|Phone|Mobile|Tel|Mo|Cell)\s*[-–:\.]*\s*[\d\s/+\-]+', '',
+        line, flags=re.IGNORECASE
+    )
+    line = re.sub(r'\s*\S+@\S+', '', line)
+    line = line.split('|')[0]
+    line = re.split(r'\s+[SsDdWw][/\.][Oo][\s.]', line)[0]
+    line = re.sub(r'\s*\([^)]*\)', '', line)
+    line = line.strip().rstrip(",-").strip()
+    return line
+
+
+def email_cross_check_should_skip(candidate_name_flat: str, full_text: str) -> bool:
+    email_match = re.search(r'([a-zA-Z0-9._%+-]+)@', full_text)
+    if not email_match:
+        return False
+    email_user = re.sub(r'\d+', '', email_match.group(1)).lower()
+    combined_name = candidate_name_flat.lower()
+    if len(combined_name) >= 8:
+        return False
+    if combined_name in email_user:
+        return True
+    return False
+
+
+def looks_like_doc_header_artifact(line: str) -> bool:
+    lower = line.lower().strip()
+    if re.search(r'\b(class|std|grade|xth|vth|ixth|xith|xiith|sscxth|hscxth)\b', lower):
+        return True
+    if re.match(r'^[A-Z\s]{2,20}$', line.strip()) and len(line.strip().split()) == 1:
+        return True
+    return False
+
+
+def extract_name(text: str, nlp=None) -> str:
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    cv_header_keywords = ["curriculum", "resume", "vitae", "curriculam"]
+    cv_header_index = None
+    education_keywords = [
+        "education", "academic", "qualification", "qualification personal details",
+        "educational qualification", "educational details", "academic profile",
+        "basic academic credentials", "intermediate", "board", "school"
     ]
+    # Priority 1 - Top Resume Name Detection
+    for line in lines[:5]:
+        candidate = re.sub(r'[^A-Za-z .]', '', line).strip()
 
-    line = line.strip()
+        candidate_lower = candidate.lower()
+        # Skip CV headers
+        if any(word in candidate_lower for word in cv_header_keywords):
+            continue
 
-    if len(line) < 3 or len(line) > 40:
-        return False
+        # Reuse existing blacklist
+        if any(word in candidate_lower for word in BLACKLIST):
+            continue
 
-    if any(char.isdigit() for char in line):
-        return False
+        if (
+        candidate.isupper()
+        and len(candidate.split()) <= 3
+        and len(candidate) >= 5
+        ):
+            return candidate.title()
 
-    if len(line.split()) > 4:
-        return False
+    # Priority 2: Check top 5 lines
+    for i, line in enumerate(lines[:5]):
+        raw_lower = line.lower()
 
-    # allow single word names (IMPORTANT FIX)
-    if len(line.split()) == 1:
-        if not line.isupper():
-            return False
+        # Skip education lines
+        if re.search(
+        r'\b(engineering|b\.?e|b\.?tech|m\.?tech|diploma|iti)\b',
+        raw_lower
+       ):
+            continue
 
-    for word in BAD_WORDS:
-        if word in line.lower():
-            return False
+        if any(word in raw_lower for word in cv_header_keywords):
+            if cv_header_index is None:
+                cv_header_index = i
+            continue
+        if any(word in raw_lower for word in education_keywords):
+            continue
+        if looks_like_doc_header_artifact(line):
+            continue
 
-    return True
+        if re.search(r'[A-Za-z]\.[A-Za-z]', line, re.IGNORECASE):
+            normalized = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', line)
+            normalized = re.sub(r'[^\w\s.]', '', normalized).replace(".", " ").strip()
+            if looks_like_name(normalized):
+                if not email_cross_check_should_skip(normalized.replace(" ", "").lower(), text):
+                    return normalized.title()
+
+        cleaned = clean_inline_name(line)
+        cleaned_norm = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', cleaned)
+        cleaned_norm = re.sub(r'[^\w\s.]', '', cleaned_norm).replace(".", " ").strip()
+        if looks_like_name(cleaned_norm):
+            if not email_cross_check_should_skip(cleaned_norm.replace(" ", "").lower(), text):
+                return cleaned_norm.title()
+
+    # Priority 3: Lines after CV header
+    if cv_header_index is not None:
+        for line in lines[cv_header_index + 1: cv_header_index + 6]:
+            raw_lower = line.lower()
+            if any(word in raw_lower for word in education_keywords):
+                continue
+
+            so_name = extract_so_name(line)
+            if so_name:
+                return so_name
+
+            if re.search(r'[A-Za-z]\.[A-Za-z]', line, re.IGNORECASE):
+                normalized = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', line)
+                normalized = re.sub(r'[^\w\s.]', '', normalized).replace(".", " ").strip()
+                if looks_like_name(normalized):
+                    return normalized.title()
+
+            cleaned = clean_inline_name(line)
+            cleaned_norm = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', cleaned)
+            cleaned_norm = re.sub(r'[^\w\s.]', '', cleaned_norm).replace(".", " ").strip()
+            if looks_like_name(cleaned_norm):
+                return cleaned_norm.title()
+
+    # Priority 4: General scan first 15 lines
+    for i, line in enumerate(lines[:15]):
+        raw_lower = line.lower()
+
+        if any(word in raw_lower for word in cv_header_keywords):
+            continue
+        if any(word in raw_lower for word in education_keywords):
+            continue
+        if looks_like_doc_header_artifact(line):
+            continue
+
+        so_name = extract_so_name(line)
+        if so_name:
+            return so_name
+
+        if any(kw in raw_lower for kw in address_keywords):
+            continue
+
+        if re.search(r'[A-Za-z]\.[A-Za-z]', line, re.IGNORECASE):
+            normalized = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', line)
+            normalized = re.sub(r'[^\w\s.]', '', normalized).replace(".", " ").strip()
+            if looks_like_name(normalized):
+                if not email_cross_check_should_skip(normalized.replace(" ", "").lower(), text):
+                    return normalized.title()
+
+        cleaned = clean_inline_name(line)
+        cleaned_norm = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', cleaned)
+        cleaned_norm = re.sub(r'[^\w\s.]', '', cleaned_norm).replace(".", " ").strip()
+        if looks_like_name(cleaned_norm):
+            if not email_cross_check_should_skip(cleaned_norm.replace(" ", "").lower(), text):
+                return cleaned_norm.title()
+
+    # Priority 5: Extended scan lines 5–25
+    for line in lines[5:25]:
+        raw_lower = line.lower()
+        if any(kw in raw_lower for kw in address_keywords):
+            continue
+        if any(kw in raw_lower for kw in BLACKLIST):
+            continue
+        if any(word in raw_lower for word in education_keywords):
+            continue
+        if re.search(r'\d', line):
+            continue
+        if ":" in line or "@" in line:
+            continue
+        if looks_like_doc_header_artifact(line):
+            continue
+        if len(line.split()) > 5:
+            continue
+
+        if re.search(r'[A-Za-z]\.[A-Za-z]', line, re.IGNORECASE):
+            normalized = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', line)
+            normalized = re.sub(r'[^\w\s.]', '', normalized).replace(".", " ").strip()
+            if looks_like_name(normalized):
+                return normalized.title()
+
+        so_name = extract_so_name(line)
+        if so_name:
+            return so_name
+
+        plain = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', ' ', line)
+        plain = re.sub(r'[^\w\s.]', '', plain).replace(".", " ").strip()
+        if looks_like_name(plain):
+            return plain.title()
+
+    # Email fallback
+    email_match = re.search(r'([a-zA-Z0-9._%+-]+)@', text)
+    if email_match:
+        user = re.sub(r'\d+', '', email_match.group(1))
+        user = user.replace(".", " ").replace("_", " ")
+        parts = [p for p in user.split() if p.isalpha()]
+        if 1 <= len(parts) <= 3:
+            return " ".join(p.capitalize() for p in parts)
+
+    # NLP fallback
+    if nlp:
+        try:
+            doc = nlp(text[:1000])
+            for ent in doc.ents:
+                if ent.label_ == "PERSON":
+                    if looks_like_name(ent.text):
+                        return ent.text.title()
+        except Exception:
+            pass
+
+    return ""
+
+
 # ================= PAN =================
 
 def detect_pan(text):
