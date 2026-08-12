@@ -1,0 +1,11 @@
+# Resume Extractor v2 — Python dependencies
+# Install: pip install -r requirements_v2.txt
+
+fastapi>=0.115
+uvicorn[standard]>=0.34
+python-multipart
+pdfminer.six
+python-docx
+easyocr
+pdf2image
+pillow
