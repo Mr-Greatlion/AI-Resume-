@@ -4,3 +4,7 @@ __pycache__/
 temp_images/
 temp_page*.jpg
 .env
+
+v2_data/
+.env.v2
+tests_v2/__pycache__/

@@ -1,18 +1,16 @@
 [Unit]
-Description=AVR Resume Extractor v2
+Description=AVR Resume Extractor v2 (review & store)
 After=network.target
 
 [Service]
 User=www-data
+Group=www-data
 WorkingDirectory=/opt/resume_v2
-ExecStart=/opt/resume_v2/venv/bin/uvicorn app_v2.main:app --host 127.0.0.1 --port 8001 --workers 2
+EnvironmentFile=/opt/resume_v2/.env
+Environment=V1_APP_PATH=/opt/resume_v2
+ExecStart=/opt/resume_v2/venv/bin/uvicorn app_v2.main:app --host 127.0.0.1 --port 8001 --workers 2 --timeout-keep-alive 30
 Restart=always
 RestartSec=5
-Environment=RESUME_V2_KEY=CHANGE_THIS_TO_STRONG_SECRET
-Environment=MAX_RECORDS=5
-Environment=V2_UPLOAD_DIR=/opt/resume_v2/uploads
-Environment=V2_DB_PATH=/opt/resume_v2/records.db
-Environment=V1_APP_PATH=/opt/resume_api
 
 [Install]
 WantedBy=multi-user.target
